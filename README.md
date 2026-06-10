@@ -20,7 +20,7 @@ A complete authentication system built with NestJS backend and React frontend, f
 ### Backend
 - NestJS
 - TypeORM
-- MySQL
+- PostgreSQL
 - JWT (jsonwebtoken)
 - Passport
 - bcrypt
@@ -59,8 +59,7 @@ auth module/
 │   │   ├── app.module.ts
 │   │   └── main.ts
 │   ├── package.json
-│   ├── tsconfig.json
-│   └── .env.example
+│   └── tsconfig.json
 └── frontend/
     ├── src/
     │   ├── context/
@@ -78,15 +77,14 @@ auth module/
     │   ├── App.jsx
     │   └── main.jsx
     ├── package.json
-    ├── vite.config.js
-    └── .env.example
+    └── vite.config.js
 ```
 
 ## Setup Instructions
 
 ### Prerequisites
 - Node.js (v18 or higher)
-- MySQL (v8 or higher)
+- PostgreSQL (v13 or higher)
 - npm or yarn
 
 ### Backend Setup
@@ -103,14 +101,14 @@ npm install
 
 3. Create a `.env` file in the backend directory:
 ```bash
-cp .env.example .env
+touch .env
 ```
 
 4. Configure the `.env` file with your database and email credentials:
 ```env
 # Database
 DB_HOST=localhost
-DB_PORT=3306
+DB_PORT=5432
 DB_USERNAME=root
 DB_PASSWORD=your_password
 DB_DATABASE=auth_db
@@ -133,7 +131,7 @@ PORT=3000
 NODE_ENV=development
 ```
 
-5. Create the MySQL database:
+5. Create the PostgreSQL database:
 ```sql
 CREATE DATABASE auth_db;
 ```
@@ -159,7 +157,7 @@ npm install
 
 3. Create a `.env` file in the frontend directory:
 ```bash
-cp .env.example .env
+touch .env
 ```
 
 4. Configure the `.env` file:
