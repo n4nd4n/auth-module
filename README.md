@@ -7,7 +7,7 @@ A complete authentication system built with NestJS backend and React frontend, f
 - User Registration
 - User Login
 - JWT Access Tokens (15 min expiry)
-- Refresh Tokens (7 days expiry, stored as HttpOnly cookies)
+- Refresh Tokens (7-day sliding expiry, 90-day max session age, stored hashed in DB and as HttpOnly cookies)
 - Forgot Password with Email OTP
 - Password Reset with OTP verification
 - Protected Dashboard
@@ -120,6 +120,7 @@ JWT_SECRET=your_jwt_secret_key_change_this_in_production
 JWT_EXPIRES_IN=15m
 REFRESH_TOKEN_SECRET=your_refresh_token_secret_key_change_this_in_production
 REFRESH_TOKEN_EXPIRES_IN=7d
+MAX_SESSION_AGE_DAYS=90
 
 # Email
 EMAIL_HOST=smtp.gmail.com
@@ -194,7 +195,10 @@ The frontend will run on `http://localhost:5173`
 - Passwords are hashed using bcrypt (10 rounds)
 - OTPs are hashed before storage
 - JWT access tokens expire after 15 minutes
-- Refresh tokens expire after 7 days
+- Refresh tokens use a 7-day sliding expiry (extended on each rotation)
+- Sessions have an absolute maximum age of 90 days (configurable via `MAX_SESSION_AGE_DAYS`)
+- Refresh tokens are rotated on every refresh and the old token is revoked
+- Refresh tokens are stored hashed (bcrypt over a SHA-256 digest), never in plaintext
 - Refresh tokens are stored as HttpOnly cookies
 - Rate limiting on OTP requests (3 requests per minute)
 - Maximum 5 OTP verification attempts
@@ -241,11 +245,13 @@ Passwords must:
 5. All refresh tokens for the user are revoked
 6. User can login with new password
 
-### Token Refresh
-1. When access token expires, frontend calls refresh endpoint
-2. Backend validates refresh token from cookie
-3. New access token is generated and returned
-4. Request is retried with new token
+### Token Refresh (sliding session)
+1. When the access token expires, the frontend calls the refresh endpoint
+2. Backend verifies the refresh token (signature + `jti` lookup + hash comparison)
+3. Backend rejects the request if the session is older than the maximum age (90 days)
+4. A new access token and a new refresh token are generated; the old refresh token is revoked
+5. The new refresh token's expiry slides forward to now + 7 days, while the original session start time is preserved
+6. The refresh token cookie is updated and the request is retried with the new access token
 
 ### Logout
 1. User clicks logout button
