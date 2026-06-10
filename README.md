@@ -146,6 +146,34 @@ npm run start:dev
 
 The backend will run on `http://localhost:3000`
 
+### Database Migrations
+
+The schema is managed with TypeORM migrations (`synchronize` is disabled). Pending
+migrations are applied automatically on startup (`migrationsRun: true`), so a normal
+`npm run start:dev` against an empty database will create all tables.
+
+Manual commands:
+```bash
+# Apply pending migrations
+npm run migration:run
+
+# Revert the most recent migration
+npm run migration:revert
+
+# Generate a new migration after changing an entity
+npm run migration:generate -- src/database/migrations/YourMigrationName
+```
+
+> **Upgrading an existing database that was previously managed by `synchronize`:**
+> The first migration (`InitSchema`) creates every table, so it cannot run against a
+> database that already has them. Because refresh tokens are disposable session data,
+> the simplest one-time transition is to reset the schema and let migrations rebuild it
+> (users will need to log in again):
+> ```bash
+> psql -U <DB_USERNAME> -d auth_db -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+> npm run migration:run
+> ```
+
 ### Frontend Setup
 
 1. Navigate to the frontend directory:
