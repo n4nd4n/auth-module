@@ -120,6 +120,8 @@ JWT_SECRET=your_jwt_secret_key_change_this_in_production
 JWT_EXPIRES_IN=15m
 REFRESH_TOKEN_SECRET=your_refresh_token_secret_key_change_this_in_production
 REFRESH_TOKEN_EXPIRES_IN=7d
+# Plain number = days (e.g. 90). A duration string with a unit also works:
+# 6h, 90d, 30m, 45s. Use a short value like 6h to test the cap quickly.
 MAX_SESSION_AGE_DAYS=90
 
 # Email
@@ -224,7 +226,7 @@ The frontend will run on `http://localhost:5173`
 - OTPs are hashed before storage
 - JWT access tokens expire after 15 minutes
 - Refresh tokens use a 7-day sliding expiry (extended on each rotation)
-- Sessions have an absolute maximum age of 90 days (configurable via `MAX_SESSION_AGE_DAYS`)
+- Sessions have an absolute maximum age of 90 days (configurable via `MAX_SESSION_AGE_DAYS`; accepts a plain number of days like `90`, or a duration string with a unit like `6h`, `90d`, `30m`, `45s`)
 - Refresh tokens are rotated on every refresh and the old token is revoked
 - Refresh tokens are stored hashed (bcrypt over a SHA-256 digest), never in plaintext
 - Refresh tokens are stored as HttpOnly cookies

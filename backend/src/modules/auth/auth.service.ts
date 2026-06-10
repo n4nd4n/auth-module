@@ -286,9 +286,17 @@ export class AuthService {
   }
 
   // Maximum absolute session age (in ms), read from MAX_SESSION_AGE_DAYS.
+  // A plain number (e.g. "90") is interpreted as a number of days for backward
+  // compatibility. A duration string with a unit (e.g. "6h", "90d", "30m",
+  // "45s") is parsed by unit, so the cap can be expressed at any granularity.
   private getMaxSessionAgeMs(): number {
-    const days = parseInt(this.configService.get('MAX_SESSION_AGE_DAYS') || '90', 10);
-    return days * 24 * 60 * 60 * 1000;
+    const raw = (this.configService.get('MAX_SESSION_AGE_DAYS') || '90').trim();
+
+    if (/^\d+$/.test(raw)) {
+      return parseInt(raw, 10) * 24 * 60 * 60 * 1000;
+    }
+
+    return this.parseExpiryToMs(raw);
   }
 
   // bcrypt only hashes the first 72 bytes and a refresh JWT is longer than
