@@ -18,7 +18,12 @@ import { UsersModule } from './modules/users/users.module';
       password: process.env.DB_PASSWORD || '',
       database: process.env.DB_DATABASE || 'auth_db',
       entities: [__dirname + '/**/*.entity{.ts,.js}'],
-      synchronize: process.env.NODE_ENV !== 'production',
+      migrations: [__dirname + '/database/migrations/*{.ts,.js}'],
+      migrationsTableName: 'migrations',
+      // Schema is managed by migrations, not auto-sync. Pending migrations are
+      // applied automatically on startup.
+      synchronize: false,
+      migrationsRun: true,
     }),
     ThrottlerModule.forRoot([
       {

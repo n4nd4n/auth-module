@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, LessThan } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import { randomUUID, createHash } from 'crypto';
 import { User } from '../../database/entities/user.entity';
 import { RefreshToken } from '../../database/entities/refresh-token.entity';
 import { PasswordResetOTP } from '../../database/entities/password-reset-otp.entity';
@@ -18,6 +19,12 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { MailService } from '../mail/mail.service';
+
+interface RefreshTokenPayload {
+  sub: number;
+  email: string;
+  jti: string;
+}
 
 @Injectable()
 export class AuthService {
@@ -107,8 +114,24 @@ export class AuthService {
   async refreshTokens(refreshTokenDto: RefreshTokenDto) {
     const { refreshToken } = refreshTokenDto;
 
+    if (!refreshToken) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    // Verify signature + JWT expiry using the refresh token secret.
+    let payload: RefreshTokenPayload;
+    try {
+      payload = this.jwtService.verify<RefreshTokenPayload>(refreshToken, {
+        secret: this.configService.get('REFRESH_TOKEN_SECRET'),
+      });
+    } catch {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+
+    // The raw token is never stored, so look the row up by its jti and then
+    // compare the presented token against the stored bcrypt hash.
     const tokenRecord = await this.refreshTokensRepository.findOne({
-      where: { token: refreshToken, isRevoked: false },
+      where: { jti: payload.jti, isRevoked: false },
       relations: ['user'],
     });
 
@@ -116,18 +139,29 @@ export class AuthService {
       throw new UnauthorizedException('Invalid refresh token');
     }
 
-    // Check session expiry (original login time + max session duration)
-    if (new Date(tokenRecord.sessionExpiresAt) < new Date()) {
+    const isTokenValid = await this.compareToken(refreshToken, tokenRecord.tokenHash);
+    if (!isTokenValid) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    // Sliding inactivity window: the token is dead once its expiry passes.
+    if (new Date(tokenRecord.expiresAt) < new Date()) {
+      throw new UnauthorizedException('Refresh token expired');
+    }
+
+    // Absolute maximum session age, measured from the original login.
+    const sessionAgeMs = Date.now() - new Date(tokenRecord.sessionCreatedAt).getTime();
+    if (sessionAgeMs > this.getMaxSessionAgeMs()) {
       throw new UnauthorizedException('Session expired');
     }
 
     const user = tokenRecord.user;
 
-    // Revoke old refresh token
+    // Rotate: revoke the old token and issue a new one with a fresh sliding
+    // expiry, carrying the original sessionCreatedAt so the 90-day cap holds.
     await this.refreshTokensRepository.update(tokenRecord.id, { isRevoked: true });
 
-    // Generate new tokens with the same sessionExpiresAt (no extension)
-    const tokens = await this.generateTokens(user.id, user.email, tokenRecord.sessionExpiresAt);
+    const tokens = await this.generateTokens(user.id, user.email, tokenRecord.sessionCreatedAt);
 
     return {
       message: 'Token refreshed successfully',
@@ -136,10 +170,18 @@ export class AuthService {
   }
 
   async logout(refreshToken: string) {
-    await this.refreshTokensRepository.update(
-      { token: refreshToken },
-      { isRevoked: true },
-    );
+    if (!refreshToken) {
+      return { message: 'Logout successful' };
+    }
+
+    // Best-effort revocation: decode (without verifying) to recover the jti.
+    const decoded = this.jwtService.decode(refreshToken) as RefreshTokenPayload | null;
+    if (decoded?.jti) {
+      await this.refreshTokensRepository.update(
+        { jti: decoded.jti },
+        { isRevoked: true },
+      );
+    }
 
     return { message: 'Logout successful' };
   }
@@ -243,42 +285,65 @@ export class AuthService {
     return value * (multipliers[unit] ?? 1000);
   }
 
+  // Maximum absolute session age (in ms), read from MAX_SESSION_AGE_DAYS.
+  // A plain number (e.g. "90") is interpreted as a number of days for backward
+  // compatibility. A duration string with a unit (e.g. "6h", "90d", "30m",
+  // "45s") is parsed by unit, so the cap can be expressed at any granularity.
+  private getMaxSessionAgeMs(): number {
+    const raw = (this.configService.get('MAX_SESSION_AGE_DAYS') || '90').trim();
+
+    if (/^\d+$/.test(raw)) {
+      return parseInt(raw, 10) * 24 * 60 * 60 * 1000;
+    }
+
+    return this.parseExpiryToMs(raw);
+  }
+
+  // bcrypt only hashes the first 72 bytes and a refresh JWT is longer than
+  // that, so pre-hash with SHA-256 to a fixed-length digest before bcrypt.
+  private async hashToken(token: string): Promise<string> {
+    const digest = createHash('sha256').update(token).digest('hex');
+    return bcrypt.hash(digest, 10);
+  }
+
+  private async compareToken(token: string, hash: string): Promise<boolean> {
+    const digest = createHash('sha256').update(token).digest('hex');
+    return bcrypt.compare(digest, hash);
+  }
+
   // Generates a signed accessToken (short-lived) and a signed refreshToken (long-lived).
-  // Saves the refreshToken to DB with its expiry so it can be validated and revoked.
-  // Expiry durations are read from .env (JWT_EXPIRES_IN, REFRESH_TOKEN_EXPIRES_IN).
-  private async generateTokens(userId: number, email: string, sessionExpiresAt?: Date) {
-    const payload = { sub: userId, email };
+  // Persists only a bcrypt hash of the refresh token, keyed by a unique jti, so the
+  // raw token never touches the database. On refresh, sessionCreatedAt is carried over
+  // so the absolute session age cap survives rotation, while expiresAt slides forward.
+  private async generateTokens(userId: number, email: string, sessionCreatedAt?: Date) {
+    const jti = randomUUID();
 
-    const accessToken = this.jwtService.sign(payload, {
-      expiresIn: this.configService.get('JWT_EXPIRES_IN') || '15m',
-      secret: this.configService.get('JWT_SECRET'),
-    });
-
-    const refreshToken = this.jwtService.sign(payload, {
-      expiresIn: this.configService.get('REFRESH_TOKEN_EXPIRES_IN') || '7d',
-      secret: this.configService.get('REFRESH_TOKEN_SECRET'),
-    });
-
-    const refreshTokenExpiry = this.configService.get('REFRESH_TOKEN_EXPIRES_IN') || '7d';
-    const expiryMs = this.parseExpiryToMs(refreshTokenExpiry);
-    const expiresAt = new Date(
-      Date.now() + expiryMs,
+    const accessToken = this.jwtService.sign(
+      { sub: userId, email },
+      {
+        expiresIn: this.configService.get('JWT_EXPIRES_IN') || '15m',
+        secret: this.configService.get('JWT_SECRET'),
+      },
     );
 
-    // If sessionExpiresAt is provided (refresh), use it; otherwise create new (login)
-    const finalSessionExpiresAt = sessionExpiresAt || expiresAt;
+    const refreshTokenExpiry = this.configService.get('REFRESH_TOKEN_EXPIRES_IN') || '7d';
+    const refreshToken = this.jwtService.sign(
+      { sub: userId, email, jti },
+      {
+        expiresIn: refreshTokenExpiry,
+        secret: this.configService.get('REFRESH_TOKEN_SECRET'),
+      },
+    );
 
-    // console.log('Refresh token expiry config:', refreshTokenExpiry);
-    // console.log('Parsed expiry in ms:', expiryMs);
-    // console.log('Expires at:', expiresAt);
-    // console.log('Session expires at:', finalSessionExpiresAt);
+    const expiresAt = new Date(Date.now() + this.parseExpiryToMs(refreshTokenExpiry));
 
     await this.refreshTokensRepository.save({
-      token: refreshToken,
+      jti,
+      tokenHash: await this.hashToken(refreshToken),
       userId,
       user: await this.usersRepository.findOne({ where: { id: userId } }),
       expiresAt,
-      sessionExpiresAt: finalSessionExpiresAt,
+      sessionCreatedAt: sessionCreatedAt || new Date(),
       isRevoked: false,
     });
 
