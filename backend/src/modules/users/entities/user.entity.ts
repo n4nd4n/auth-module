@@ -1,6 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, OneToMany } from 'typeorm';
-import { RefreshToken } from './refresh-token.entity';
-import { PasswordResetOTP } from './password-reset-otp.entity';
+import { RefreshToken } from '../../auth/entities/refresh-token.entity';
+import { PasswordResetOTP } from '../../auth/entities/password-reset-otp.entity';
 
 @Entity('users')
 export class User {

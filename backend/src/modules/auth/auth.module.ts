@@ -9,9 +9,9 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Reflector } from '@nestjs/core';
-import { User } from '../../database/entities/user.entity';
-import { RefreshToken } from '../../database/entities/refresh-token.entity';
-import { PasswordResetOTP } from '../../database/entities/password-reset-otp.entity';
+import { User } from '../users/entities/user.entity';
+import { RefreshToken } from './entities/refresh-token.entity';
+import { PasswordResetOTP } from './entities/password-reset-otp.entity';
 import { MailModule } from '../mail/mail.module';
 
 @Module({
